@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+data/runs/
+data/synthetic/
+data/reports.json
+.pytest_cache/
+*.egg-info/
+extracted_docs/
+extract_pdfs.py
