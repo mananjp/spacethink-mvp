@@ -16,6 +16,8 @@ import pandas as pd
 from domain import RunManifest, SimMapping
 from explore.detector import ZScoreDetector
 from evaluate.scorer import DistanceScorer, normalize_posteriors
+from evaluate.llm_council import LLMCouncil
+from evaluate.human_gate import evaluate_human_gate
 from hypothesize.generator import StubLlm
 from hypothesize.groq_explainer import generate_exhyte_timeline
 from runstore import RunStore
@@ -38,6 +40,7 @@ def run_closed_loop(
     detector = ZScoreDetector()
     llm = StubLlm()
     scorer = DistanceScorer(channels=CHANNELS)
+    council = LLMCouncil(api_key=groq_api_key)
 
     manifest = RunManifest(
         run_id=run_id,
@@ -72,6 +75,13 @@ def run_closed_loop(
         top = ranked[0] if ranked else None
         top_hyp = next((h for h in gated if h.id == top.hypothesis_id), None) if top else None
 
+        # --- LLM Council Deliberation & Human Validation Gate ---
+        consensus = council.deliberate(event, top_hyp, top)
+        validation_status = evaluate_human_gate(event, consensus, top.posterior if top else None)
+
+        store.put(run_id, "council_consensus", consensus, key=f"council_{event.id}")
+        store.put(run_id, "validation_status", validation_status, key=f"val_{event.id}")
+
         ranked_mechanisms = [
             (next(h.mechanism for h in gated if h.id == r.hypothesis_id), round(r.posterior, 3))
             for r in ranked
@@ -98,7 +108,23 @@ def run_closed_loop(
             "top_hypothesis_text": top_hyp.text if top_hyp else None,
             "posterior": top.posterior if top else None,
             "ranked_mechanisms": ranked_mechanisms,
+            "council_consensus": {
+                "consensus_score": consensus.consensus_score,
+                "verdict": consensus.verdict.value,
+                "summary": consensus.summary,
+                "individual_votes": [
+                    {
+                        "role": v.role.value,
+                        "agrees": v.agrees_with_top_hyp,
+                        "confidence": v.confidence,
+                        "rationale": v.rationale,
+                    }
+                    for v in consensus.individual_votes
+                ],
+            },
+            "validation_status": validation_status.value,
             "ai_timeline": ai_timeline,
         })
 
     return report
+

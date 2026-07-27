@@ -75,3 +75,42 @@ class RunManifest:
     twin_name: str
     llm_name: str
     notes: str = ""
+
+
+class CouncilRole(str, Enum):
+    SYSTEMS_ENGINEER = "systems_engineer"
+    DATA_QUALITY_ANALYST = "data_quality_analyst"
+    TWIN_PHYSICS_VERIFIER = "twin_physics_verifier"
+    RED_TEAM_SKEPTIC = "red_team_skeptic"
+
+
+class CouncilVerdict(str, Enum):
+    UNANIMOUS_AGREEMENT = "unanimous_agreement"
+    STRONG_CONSENSUS = "strong_consensus"
+    SPLIT_COUNCIL = "split_council"
+    REJECTED_BY_COUNCIL = "rejected_by_council"
+
+
+class ValidationStatus(str, Enum):
+    AUTO_APPROVED = "auto_approved"
+    ESCALATED_PENDING_HUMAN = "escalated_pending_human"
+    HUMAN_APPROVED = "human_approved"
+    HUMAN_REJECTED = "human_rejected"
+    HUMAN_OVERRIDDEN = "human_overridden"
+
+
+@dataclass(frozen=True)
+class CouncilVote:
+    role: CouncilRole
+    agrees_with_top_hyp: bool
+    confidence: float
+    rationale: str
+
+
+@dataclass(frozen=True)
+class CouncilConsensus:
+    consensus_score: float
+    verdict: CouncilVerdict
+    summary: str
+    individual_votes: tuple[CouncilVote, ...]
+

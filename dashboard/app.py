@@ -1,4 +1,4 @@
-"""Streamlit dashboard — closed-loop viewer with Groq AI Timeline & Discovery Analysis.
+"""Streamlit dashboard — closed-loop viewer with LLM Council Deliberation & Human Validation Gate.
 
 Run:
     streamlit run dashboard/app.py
@@ -26,7 +26,11 @@ load_dotenv()
 
 st.set_page_config(page_title="spaceThink — EXHYTE Dashboard", layout="wide", page_icon="🛸")
 st.title("🛸 spaceThink — Autonomous EXHYTE Closed-Loop Telemetry Agent")
-st.caption("Explore (Detect) ➔ Hypothesize ➔ Test (Digital Twin) ➔ Refine (Posterior Scoring)")
+st.caption("Explore (Detect) ➔ Hypothesize ➔ Test (Digital Twin) ➔ Score (SBI) ➔ LLM Council ➔ Human Gate")
+
+# Initialize session state for human sign-offs if not present
+if "human_decisions" not in st.session_state:
+    st.session_state.human_decisions = {}
 
 # --- Sidebar Configuration ---
 st.sidebar.header("⚙️ Configuration & Groq AI Setup")
@@ -45,7 +49,7 @@ selected_model = st.sidebar.selectbox(
 if user_api_key:
     st.sidebar.success("⚡ Groq API Key Active")
 else:
-    st.sidebar.info("ℹ️ Running in Offline Mode (Offline Timeline Template)")
+    st.sidebar.info("ℹ️ Running in Offline Mode (Offline Council & Timeline Templates)")
 
 # --- Load Data Reports ---
 reports_path = Path("data/reports.json")
@@ -69,24 +73,35 @@ fig.update_layout(
     title="Multichannel Telemetry Series (Wheel Speed, Current, Temperature)",
     xaxis_title="Time (s)",
     yaxis_title="Telemetry Value",
-    height=380,
+    height=360,
     margin=dict(l=20, r=20, t=40, b=20),
 )
 st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
-st.markdown("## ⚡ Detected Events & Closed-Loop EXHYTE Analysis")
+st.markdown("## ⚡ Detected Events, LLM Council & Human Validation Gate")
 
 # Filter or inspect events
 for i, ev in enumerate(report["events"]):
+    event_id = ev["event_id"]
+    val_status = st.session_state.human_decisions.get(event_id, ev.get("validation_status", "escalated_pending_human"))
+
     severity_color = "🔴" if ev['severity'] == "high" else "🟡" if ev['severity'] == "medium" else "🟢"
-    title = f"{severity_color} Event #{i+1}: `{ev['channel']}` — Severity: {ev['severity'].upper()} (Z-Score: {ev['score']:.2f})"
+    status_badge = (
+        "🟢 AUTO APPROVED" if val_status == "auto_approved"
+        else "🟢 HUMAN APPROVED" if val_status == "human_approved"
+        else "🔴 HUMAN REJECTED" if val_status == "human_rejected"
+        else "⚡ HUMAN OVERRIDDEN" if val_status == "human_overridden"
+        else "⚠️ ESCALATED FOR HUMAN VALIDATION"
+    )
+
+    title = f"{severity_color} Event #{i+1}: `{ev['channel']}` — Severity: {ev['severity'].upper()} (Z-Score: {ev['score']:.2f}) | Status: [{status_badge}]"
     
     with st.expander(title, expanded=(i == 0)):
         col1, col2 = st.columns([1, 1])
 
         with col1:
-            st.markdown("#### 🎯 Diagnostic Summary")
+            st.markdown("#### 🎯 Diagnostic Summary & Posterior Belief")
             st.write(f"**Top Diagnosed Mechanism:** `{ev['top_hypothesis']}`")
             st.write(f"**Posterior Belief Score:** `{ev['posterior']:.3f}`" if ev['posterior'] else "N/A")
             st.info(ev['top_hypothesis_text'])
@@ -94,10 +109,45 @@ for i, ev in enumerate(report["events"]):
             st.markdown("**Ranked Candidate Mechanisms:**")
             st.table(pd.DataFrame(ev["ranked_mechanisms"], columns=["Mechanism", "Posterior Probability"]))
 
-        with col2:
-            st.markdown("#### 🤖 AI EXHYTE Closed-Loop Timeline (Powered by Groq)")
+            # --- LLM Council Section ---
+            council_data = ev.get("council_consensus")
+            if council_data:
+                st.markdown("#### 🏛️ LLM Council Deliberation Panel")
+                verdict = council_data.get("verdict", "split_council")
+                score = council_data.get("consensus_score", 0.0)
 
-            # Check if live AI generation requested or present
+                v_color = "🟢" if "unanimous" in verdict or "strong" in verdict else "🟡" if "split" in verdict else "🔴"
+                st.markdown(f"**Council Verdict:** {v_color} `{verdict.upper()}` (Consensus Index: `{score:.2f}`)")
+                st.caption(f"Summary: {council_data.get('summary', '')}")
+
+                votes = council_data.get("individual_votes", [])
+                if votes:
+                    vote_df = pd.DataFrame(votes)
+                    vote_df.columns = ["Role", "Agrees", "Confidence", "Rationale"]
+                    st.table(vote_df)
+
+        with col2:
+            # --- Human Validation Gate Section ---
+            st.markdown("#### 🛡️ Human-in-the-Loop Validation Gate")
+            st.write(f"**Current Gate Status:** `{val_status.upper()}`")
+
+            b_col1, b_col2, b_col3 = st.columns(3)
+            with b_col1:
+                if st.button(f"✅ Approve Discovery", key=f"app_{event_id}"):
+                    st.session_state.human_decisions[event_id] = "human_approved"
+                    st.rerun()
+            with b_col2:
+                if st.button(f"❌ Reject / False Alarm", key=f"rej_{event_id}"):
+                    st.session_state.human_decisions[event_id] = "human_rejected"
+                    st.rerun()
+            with b_col3:
+                if st.button(f"⚡ Override Diagnosis", key=f"ovr_{event_id}"):
+                    st.session_state.human_decisions[event_id] = "human_overridden"
+                    st.rerun()
+
+            st.markdown("---")
+            st.markdown("#### 🤖 AI EXHYTE Closed-Loop Timeline (Groq)")
+
             ai_text = ev.get("ai_timeline")
             if user_api_key:
                 if st.button(f"🔄 Re-Generate Timeline with Groq for Event #{i+1}", key=f"btn_{ev['event_id']}"):
