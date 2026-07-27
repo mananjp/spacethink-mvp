@@ -1,7 +1,7 @@
 """Planner — orchestrates the full closed loop for one run:
 
     ingest -> detect (explore) -> hypothesize -> twin-simulate -> score (evaluate)
-    -> rank hypotheses -> persist to RunStore + Postgres
+    -> rank hypotheses -> generate Groq EXHYTE timeline -> persist to RunStore
 
 This is the "engine" described in the dossier: the same loop regardless of
 which strategic direction (A/B/C) the product ultimately points at.
@@ -9,7 +9,7 @@ which strategic direction (A/B/C) the product ultimately points at.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -17,6 +17,7 @@ from domain import RunManifest, SimMapping
 from explore.detector import ZScoreDetector
 from evaluate.scorer import DistanceScorer, normalize_posteriors
 from hypothesize.generator import StubLlm
+from hypothesize.groq_explainer import generate_exhyte_timeline
 from runstore import RunStore
 from twin.simulator import ToySimulator
 
@@ -29,6 +30,7 @@ def run_closed_loop(
     run_id: str | None = None,
     n_sims_per_hypothesis: int = 20,
     store: RunStore | None = None,
+    groq_api_key: str | None = None,
 ) -> dict:
     run_id = run_id or str(uuid.uuid4())
     store = store or RunStore()
@@ -39,7 +41,7 @@ def run_closed_loop(
 
     manifest = RunManifest(
         run_id=run_id,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
         dataset="synthetic",
         detector_name=detector.name,
         twin_name="ToySimulator",
@@ -70,6 +72,23 @@ def run_closed_loop(
         top = ranked[0] if ranked else None
         top_hyp = next((h for h in gated if h.id == top.hypothesis_id), None) if top else None
 
+        ranked_mechanisms = [
+            (next(h.mechanism for h in gated if h.id == r.hypothesis_id), round(r.posterior, 3))
+            for r in ranked
+        ]
+
+        ai_timeline = generate_exhyte_timeline(
+            event_id=event.id,
+            channel=event.channel,
+            severity=event.severity.value,
+            score=event.score,
+            top_hypothesis=top_hyp.mechanism if top_hyp else None,
+            top_text=top_hyp.text if top_hyp else None,
+            posterior=top.posterior if top else None,
+            ranked_mechanisms=ranked_mechanisms,
+            api_key=groq_api_key,
+        )
+
         report["events"].append({
             "event_id": event.id,
             "channel": event.channel,
@@ -78,10 +97,8 @@ def run_closed_loop(
             "top_hypothesis": top_hyp.mechanism if top_hyp else None,
             "top_hypothesis_text": top_hyp.text if top_hyp else None,
             "posterior": top.posterior if top else None,
-            "ranked_mechanisms": [
-                (next(h.mechanism for h in gated if h.id == r.hypothesis_id), round(r.posterior, 3))
-                for r in ranked
-            ],
+            "ranked_mechanisms": ranked_mechanisms,
+            "ai_timeline": ai_timeline,
         })
 
     return report

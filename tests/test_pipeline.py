@@ -1,12 +1,14 @@
 """Contract + smoke tests — run with: pytest"""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import pandas as pd
 
 from domain import FaultParameter, SimMapping
 from explore.detector import ThresholdDetector, ZScoreDetector
 from evaluate.scorer import DistanceScorer, normalize_posteriors
 from hypothesize.generator import StubLlm
+from hypothesize.groq_explainer import generate_exhyte_timeline
 from ingest.synthetic_generator import generate_reaction_wheel_telemetry
 from plan.planner import run_closed_loop
 from twin.simulator import ToySimulator
@@ -34,11 +36,10 @@ def test_toy_simulator_runs_and_respects_fault_params():
 
 def test_stub_llm_generates_plausible_hypotheses():
     from domain import EventOfInterest, Severity, new_id
-    from datetime import datetime
 
     event = EventOfInterest(
         id=new_id(), run_id="r", channel="wheel_speed_rpm",
-        start_ts=datetime.utcnow(), end_ts=datetime.utcnow(),
+        start_ts=datetime.now(timezone.utc), end_ts=datetime.now(timezone.utc),
         score=5.0, severity=Severity.HIGH, detector_name="test",
     )
     llm = StubLlm()
@@ -70,6 +71,24 @@ def test_distance_scorer_normalizes_to_sum_one():
     assert ranked[0].hypothesis_id == hyp_a.id  # closer match should win
 
 
+def test_exhyte_timeline_generator_offline():
+    timeline = generate_exhyte_timeline(
+        event_id="test-1",
+        channel="wheel_speed_rpm",
+        severity="high",
+        score=5.2,
+        top_hypothesis="bearing_friction_increase",
+        top_text="Test description",
+        posterior=0.75,
+        ranked_mechanisms=[("bearing_friction_increase", 0.75), ("stiction", 0.25)],
+    )
+    assert "EXHYTE Closed-Loop Timeline" in timeline
+    assert "EXPLORE" in timeline
+    assert "HYPOTHESIZE" in timeline
+    assert "TEST" in timeline
+    assert "REFINE" in timeline
+
+
 def test_full_closed_loop_end_to_end():
     df = generate_reaction_wheel_telemetry(fault_type="friction_increase", n_points=3000, fault_start=1200, seed=7)
     report = run_closed_loop(df, n_sims_per_hypothesis=5)
@@ -77,3 +96,4 @@ def test_full_closed_loop_end_to_end():
     assert report["n_events"] >= 0
     if report["n_events"] > 0:
         assert report["events"][0]["top_hypothesis"] is not None
+        assert "ai_timeline" in report["events"][0]

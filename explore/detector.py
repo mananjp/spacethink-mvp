@@ -8,7 +8,7 @@ ZScoreDetector is the first real, still-simple baseline.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 import numpy as np
@@ -46,7 +46,7 @@ class ZScoreDetector:
 
     def detect(self, df: pd.DataFrame, channels: list[str], run_id: str = "local") -> list[EventOfInterest]:
         events: list[EventOfInterest] = []
-        base_time = datetime.utcnow()
+        base_time = datetime.now(timezone.utc)
 
         for ch in channels:
             series = df[ch].to_numpy(dtype=float)
