@@ -44,7 +44,9 @@ def test_stub_llm_generates_plausible_hypotheses():
     )
     llm = StubLlm()
     hyps = llm.generate(event)
-    assert len(hyps) == 3
+    # 3 fault mechanisms + 1 nominal ("no fault") candidate.
+    assert len(hyps) == 4
+    assert any(h.mechanism == "nominal_no_fault" for h in hyps)
     assert all(llm.critique(h).plausible for h in hyps)
 
 

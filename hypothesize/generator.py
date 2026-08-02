@@ -7,10 +7,11 @@ returns fixed templated hypotheses keyed to detector metadata, which is enough
 to exercise the full closed loop with synthetic data before wiring in a real
 LLM API call.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from domain import EventOfInterest, FaultParameter, Hypothesis, new_id
 
@@ -22,34 +23,42 @@ class Critique:
 
 
 class LlmClient(Protocol):
-    def generate(self, event: EventOfInterest, context: dict) -> list[Hypothesis]:
-        ...
+    def generate(self, event: EventOfInterest, context: dict) -> list[Hypothesis]: ...
 
-    def critique(self, hyp: Hypothesis) -> Critique:
-        ...
+    def critique(self, hyp: Hypothesis) -> Critique: ...
 
 
 # Candidate mechanisms for the reaction-wheel wedge (from the fault library).
-TEMPLATES = [
+# The nominal candidate lets the loop conclude "benign / sensor noise" instead of
+# being forced to attribute every detected blip to a real fault.
+TEMPLATES: list[dict[str, Any]] = [
+    {
+        "mechanism": "nominal_no_fault",
+        "text": "No systematic level shift, trend, dropout, or stiction signature "
+        "relative to baseline — consistent with nominal operation or transient "
+        "sensor noise rather than a real fault.",
+        "params": [],
+        "prior": 0.3,
+    },
     {
         "mechanism": "bearing_friction_increase",
         "text": "Wheel current and temperature are rising while speed drifts down — "
-                "consistent with increasing bearing friction (lubricant degradation).",
+        "consistent with increasing bearing friction (lubricant degradation).",
         "params": [FaultParameter("friction", 0.6)],
         "prior": 0.4,
     },
     {
         "mechanism": "encoder_dropout",
         "text": "Speed channel shows brief zero-reads with no corresponding current/"
-                "temperature change — consistent with intermittent encoder dropout, "
-                "not a real mechanical fault.",
+        "temperature change — consistent with intermittent encoder dropout, "
+        "not a real mechanical fault.",
         "params": [FaultParameter("dropout_rate", 0.01)],
         "prior": 0.3,
     },
     {
         "mechanism": "stiction",
         "text": "Speed shows sharp step-drops paired with current spikes — "
-                "consistent with stiction (static friction) events in the wheel bearing.",
+        "consistent with stiction (static friction) events in the wheel bearing.",
         "params": [FaultParameter("stiction_rate", 0.003)],
         "prior": 0.3,
     },
@@ -63,7 +72,9 @@ class StubLlm:
 
     name = "stub_llm"
 
-    def generate(self, event: EventOfInterest, context: dict | None = None) -> list[Hypothesis]:
+    def generate(
+        self, event: EventOfInterest, context: dict | None = None
+    ) -> list[Hypothesis]:
         return [
             Hypothesis(
                 id=new_id(),
