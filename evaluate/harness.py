@@ -35,9 +35,7 @@ def _run_prediction(report: dict) -> str:
     """
     if not report["events"]:
         return "nominal_no_fault"
-    votes = Counter(
-        e["top_hypothesis"] for e in report["events"] if e["top_hypothesis"]
-    )
+    votes = Counter(e["top_hypothesis"] for e in report["events"] if e["top_hypothesis"])
     if not votes:
         return "nominal_no_fault"
     return votes.most_common(1)[0][0]
@@ -49,8 +47,16 @@ def evaluate(
     fault_start: int = 2000,
     n_sims_per_hypothesis: int = 8,
     base_seed: int = 100,
+    detector_name: str | None = None,
+    scorer_name: str | None = None,
 ) -> dict:
-    """Diagnose ``n_per_class`` runs of each fault type and score the result."""
+    """Diagnose ``n_per_class`` runs of each fault type and score the result.
+
+    ``detector_name`` / ``scorer_name`` select pipeline components (None = the
+    proven defaults, zscore + signature) so combinations can be compared honestly.
+    """
+    from plan.components import build_detector, build_scorer
+
     # Confusion matrix keyed [truth_mechanism][predicted_mechanism].
     confusion: dict[str, Counter] = {t: Counter() for t in MECHANISMS}
     per_class_correct: Counter = Counter()
@@ -67,7 +73,11 @@ def evaluate(
         truth = run.truth_mechanism
         assert truth is not None  # synthetic runs are always labelled
         report = run_closed_loop(
-            run.telemetry, n_sims_per_hypothesis=n_sims_per_hypothesis, store=store
+            run.telemetry,
+            n_sims_per_hypothesis=n_sims_per_hypothesis,
+            store=store,
+            detector=build_detector(detector_name),
+            scorer=build_scorer(scorer_name),
         )
         predicted = _run_prediction(report)
         confusion[truth][predicted] += 1
@@ -89,9 +99,7 @@ def evaluate(
         "correct": correct,
         "total": total,
         "per_class_accuracy": {
-            m: (
-                per_class_correct[m] / per_class_total[m] if per_class_total[m] else 0.0
-            )
+            m: (per_class_correct[m] / per_class_total[m] if per_class_total[m] else 0.0)
             for m in MECHANISMS
         },
         "nominal_false_positive_rate": nominal_fp_rate,
@@ -106,9 +114,7 @@ def format_report(result: dict) -> str:
         "spaceThink diagnostic evaluation (synthetic, ground-truth labelled)",
         "=" * 68,
     ]
-    short = {
-        m: m.replace("bearing_", "").replace("_no_fault", "")[:9] for m in MECHANISMS
-    }
+    short = {m: m.replace("bearing_", "").replace("_no_fault", "")[:9] for m in MECHANISMS}
     header = "truth \\ pred |" + "".join(f"{short[m]:>10}" for m in MECHANISMS)
     lines.append(header)
     lines.append("-" * len(header))
@@ -121,9 +127,7 @@ def format_report(result: dict) -> str:
     lines.append(
         f"overall accuracy         : {result['accuracy']:.1%} ({result['correct']}/{result['total']})"
     )
-    lines.append(
-        f"nominal false-positive   : {result['nominal_false_positive_rate']:.1%}"
-    )
+    lines.append(f"nominal false-positive   : {result['nominal_false_positive_rate']:.1%}")
     lines.append("per-class accuracy       :")
     for m in MECHANISMS:
         lines.append(f"    {short[m]:>10}: {result['per_class_accuracy'][m]:.1%}")
