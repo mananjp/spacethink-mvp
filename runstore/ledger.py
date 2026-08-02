@@ -97,6 +97,7 @@ class AuditLedger:
         )
 
         entry_dict = asdict(entry)
+        entry_dict["ts"] = now.isoformat()
         entry_hash = _hash_entry(entry_dict)
 
         with sqlite3.connect(str(self.db_path)) as conn:

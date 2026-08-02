@@ -134,7 +134,7 @@ def run_sbc(
     from scipy.stats import norm
     p_value = float(2 * (1 - norm.cdf(abs(z))))
 
-    passed = p_value > 0.01  # Reject if p < 0.01
+    passed = bool(p_value > 0.01)  # Reject if p < 0.01
 
     return SBCResult(
         family=family,
@@ -210,8 +210,8 @@ def run_ppc(
         coverages.append(1.0 if low <= r_val <= high else 0.0)
 
     # Pass if >= 80% of statistics are covered
-    coverage_frac = np.mean(coverages)
-    passed = coverage_frac >= 0.8
+    coverage_frac = float(np.mean(coverages))
+    passed = bool(coverage_frac >= 0.8)
 
     return PPCResult(
         family=family,
