@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, Protocol
+from typing import Optional, Protocol, runtime_checkable
 import uuid
 
 
@@ -224,4 +224,62 @@ class FleetCluster:
     representative_mechanism: str
     centroid_distance: float
     recommended_action: str = ""
+
+
+# ---------------------------------------------------------------------------
+#  Phase 3.5 — Domain-Agnostic, Calibration-Gated Verification Contract
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Evidence:
+    """Container for heterogeneous domain evidence (telemetry DF, optical spectrum, catalog matches)."""
+    domain: str
+    raw_data: dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """Result of a domain verification step."""
+    hypothesis_id: str
+    verified: bool
+    fit_score: float
+    posterior: float
+    diagnostics: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class CalibrationStatus:
+    """Standardized calibration boundary object crossing the domain boundary."""
+    domain: str
+    passed: bool
+    confidence: float        # Calibrated confidence (e.g. from SBC/PPC or catalog benchmark), NOT self-reported
+    method: str              # e.g., "SBC+PPC", "catalog cross-match"
+    diagnostics: dict = field(default_factory=dict)
+
+
+class OversightMode(str, Enum):
+    ACTIVE = "active"     # Hold for human approval before taking action/claim
+    PASSIVE = "passive"   # Proceed, log to evidence ledger, notify async
+
+
+@dataclass(frozen=True)
+class OversightPolicy:
+    """Policy governing autonomy levels based strictly on CalibrationStatus."""
+    min_confidence: float = 0.8
+    require_calibration: bool = True
+
+
+@runtime_checkable
+class Verifier(Protocol):
+    """Domain-specific hypothesis verification protocol. One implementation per domain.
+    Downstream gating code never branches on domain.
+    """
+
+    def verify(self, hypothesis: Hypothesis, evidence: Evidence) -> VerificationResult:
+        ...
+
+    def calibration_status(self) -> CalibrationStatus:
+        ...
+
 

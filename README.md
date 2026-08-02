@@ -29,6 +29,13 @@ Built for ADCS/reaction-wheel anomaly triage, insurance evidence generation, cro
 - **Counterfactual Replay (`evaluate/counterfactual.py`)**: Closed-loop diagnosis replay comparing alternative hypotheses fit.
 - **Claim-Pack Exporter (`cli/claim_pack.py`)**: Underwriter/regulator claim pack exporter (JSON & Markdown) with claim-evidence graphs and per-mechanistic-step uncertainty.
 
+### Phase 3.5 — Calibration-Gated Verification Contract
+- **`VerifierProtocol` (`domain/__init__.py`)**: Top-level protocol (`Verifier`) unifying domain-specific twin simulation and statistical scoring across heterogeneous data types.
+- **`CalibrationStatus` (`domain/__init__.py`)**: Standardized domain-agnostic boundary object (`domain`, `passed`, `confidence`, `method`, `diagnostics`).
+- **`AutonomyGate` (`evaluate/autonomy_gate.py`)**: Gating engine (`decide_oversight`) switching between active human hold (`ACTIVE`) and passive logging (`PASSIVE`) based purely on `CalibrationStatus` + `OversightPolicy`.
+- **Domain Verifiers (`evaluate/verifiers/`)**: `ReactionWheelVerifier` (reaction-wheel twin + SBI + SBC/PPC checks) and `AstroCatalogVerifier` (astronomical transient catalog cross-match + lightcurve physics checks) proving domain agnosticism.
+
+
 ### Phase 4 — Multi-Tenant FastAPI & Fleet Scale
 - **FastAPI REST API (`api/app.py`)**: Endpoints for `/v1/events`, `/v1/runs/{run_id}`, `/v1/claim-pack`, `/v1/health`, `/v1/ready` with in-memory token-bucket rate limiting and API key auth.
 - **Twin Calibrator (`twin/calibrator.py`)**: Parametric twin auto-calibration from customer telemetry.

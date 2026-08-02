@@ -191,6 +191,43 @@ The regression bed for every downstream claim:
 
 ---
 
+## Phase 3.5 — The Calibration-Gated Verification Contract (2 weeks)
+
+**Goal:** a domain-agnostic, calibration-checked verification contract that heterogeneous domain-specific verifiers implement, whose calibration status — not a generic confidence score — is the signal a human-oversight policy actually gates on.
+
+### 3.5.1 `VerifierProtocol` (`domain/__init__.py`)
+
+- Generalizes `Twin` + `Scorer` into a unified domain verification protocol (`Verifier`).
+- `verify(hypothesis: Hypothesis, evidence: Evidence) -> VerificationResult`.
+- `calibration_status() -> CalibrationStatus`.
+
+### 3.5.2 `CalibrationStatus` (`domain/__init__.py`)
+
+- Standardized boundary object crossing the domain boundary:
+  `{domain, passed, confidence, method, diagnostics}`.
+- Every `Verifier` reports whether *it* has passed its own domain-appropriate calibration check (e.g. SBC+PPC, catalog benchmark) before downstream code trusts its output.
+
+### 3.5.3 `AutonomyGate` (`evaluate/autonomy_gate.py`)
+
+- Gating function `decide_oversight(status: CalibrationStatus, policy: OversightPolicy) -> OversightMode`.
+- Reads **only** `CalibrationStatus` — never raw domain data or domain-specific heuristic scores.
+- `OversightMode.ACTIVE` → hold for human approval before any action/claim.
+- `OversightMode.PASSIVE` → proceed autonomously, log to evidence ledger, notify async.
+
+### 3.5.4 Heterogeneous Domain Verifier Implementations (`evaluate/verifiers/`)
+
+- **Primary Verifier**: `ReactionWheelVerifier` (`evaluate/verifiers/reaction_wheel.py`) wrapping reaction-wheel twin simulation + SBI scoring + SBC/PPC calibration checks.
+- **Second Verifier**: `AstroCatalogVerifier` (`evaluate/verifiers/astro_catalog.py`) wrapping astronomical transient catalog cross-matching + physical lightcurve plausibility checks to prove domain agnosticism.
+
+### 3.5.5 Phase 3.5 exit criteria
+
+- `ReactionWheelVerifier` and `AstroCatalogVerifier` both pass contract compliance tests for `VerifierProtocol`.
+- `AutonomyGate` evaluates calibration status correctly across both domains without branching on raw data types.
+- PR-level unit tests verify `decide_oversight` active vs. passive transitions strictly enforce calibration bounds.
+
+---
+
+
 ## Phase 4 — Multi-Tenant / Fleet-at-Scale (4 weeks)
 
 **Goal:** channel leverage. One deal, many fleets.
