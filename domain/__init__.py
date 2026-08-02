@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Protocol
 import uuid
 
 
 def new_id() -> str:
     return str(uuid.uuid4())
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now (replaces deprecated datetime.utcnow)."""
+    return datetime.now(timezone.utc)
 
 
 class Severity(str, Enum):
@@ -54,7 +59,7 @@ class Hypothesis:
     fault_params: tuple[FaultParameter, ...]
     prior: float
     generator: str  # "template" | "llm"
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utcnow)
 
 
 @dataclass(frozen=True)
@@ -113,4 +118,110 @@ class CouncilConsensus:
     verdict: CouncilVerdict
     summary: str
     individual_votes: tuple[CouncilVote, ...]
+
+
+# ---------------------------------------------------------------------------
+#  Phase 2 — Telecommand model for auto-explain
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Telecommand:
+    """A spacecraft telecommand record used for auto-explain matching."""
+    id: str
+    name: str
+    subsystem: str
+    timestamp: datetime
+    parameters: dict = field(default_factory=dict)
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class TriageResult:
+    """Result of bulk event triage — auto-explained vs escalated."""
+    event_id: str
+    auto_explained: bool
+    explanation: str
+    matching_telecommand_id: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+#  Phase 3 — Audit ledger, Claim-evidence graph, Adjudicator protocol
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AuditEntry:
+    """Single entry in the append-only hash-chained audit ledger."""
+    prev_hash: str
+    ts: datetime
+    actor: str
+    kind: str
+    artifact_hash: str
+    prompt_version: str = ""
+    model_version: str = ""
+    sim_params: dict = field(default_factory=dict)
+    seed: int = 0
+
+
+@dataclass(frozen=True)
+class ClaimNode:
+    """A single claim in a claim-evidence graph."""
+    id: str
+    claim_text: str
+    mechanism_step: str
+    uncertainty: float          # per-mechanistic-step uncertainty
+    evidence_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceEdge:
+    """Links a claim to its supporting evidence artifact."""
+    claim_id: str
+    evidence_artifact_hash: str
+    evidence_type: str          # "sim_result" | "telemetry" | "telecommand" | "ledger"
+    strength: float = 1.0
+
+
+@dataclass(frozen=True)
+class EvidenceGraph:
+    """Complete claim-evidence graph for an insurance/audit pack."""
+    run_id: str
+    claims: tuple[ClaimNode, ...]
+    edges: tuple[EvidenceEdge, ...]
+
+
+class Adjudicator(Protocol):
+    """Protocol for per-mechanistic-step uncertainty + claim-evidence evaluation."""
+
+    def adjudicate(
+        self,
+        event: EventOfInterest,
+        hypothesis: Hypothesis,
+        sim_result: SimResult,
+        consensus: CouncilConsensus,
+    ) -> EvidenceGraph:
+        ...
+
+
+# ---------------------------------------------------------------------------
+#  Phase 4 — Calibrated twin parameters, Fleet clustering
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class CalibratedTwinParams:
+    """Parameters auto-calibrated from customer telemetry for BasiliskTwin."""
+    customer_id: str
+    subsystem: str
+    fidelity_tier: int          # 1 = parametric auto-calibrated, 2 = high-fidelity import
+    parameters: dict = field(default_factory=dict)
+    calibrated_at: datetime = field(default_factory=_utcnow)
+
+
+@dataclass(frozen=True)
+class FleetCluster:
+    """A cluster of similar anomaly signatures across a fleet."""
+    cluster_id: str
+    event_ids: tuple[str, ...]
+    representative_mechanism: str
+    centroid_distance: float
+    recommended_action: str = ""
 
