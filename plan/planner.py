@@ -154,6 +154,9 @@ def run_closed_loop(
         "passed": cal_status.passed,
         "confidence": cal_status.confidence,
         "method": cal_status.method,
+        # The diagnostics are the evidence that the confidence was derived rather
+        # than self-reported; an auditor reading a claim pack needs to see them.
+        "diagnostics": dict(cal_status.diagnostics or {}),
     }
     store.put(run_id, "calibration_status", cal_status, key="calibration")
 

@@ -69,11 +69,39 @@ def test_failed_calibration_forces_active_and_human():
 
 
 def test_default_path_uses_derived_calibration():
-    # No injection: the loop derives the real reaction-wheel status (currently failing
-    # SBC), so the gate must be ACTIVE and requires_human True -- honest by default.
+    """No injection: the loop must gate on the *derived* status, whatever it says.
+
+    This previously asserted ACTIVE, which pinned a transient fact (the scorer had
+    not yet passed SBC) rather than a contract. Now that the synthetic-likelihood
+    posterior is calibrated and sharp, the derived status passes and the honest
+    answer is PASSIVE. What must hold in both worlds is that the gate *follows* the
+    derived status instead of reporting its own — so that is what is asserted.
+    """
     report = run_closed_loop(_tele(), n_sims_per_hypothesis=4)
     assert "calibration" in report
     assert report["calibration"]["method"] == "SBC+PPC"
+
+    calibration = report["calibration"]
+    # Derived, never self-reported: confidence must come from the diagnostics.
+    assert calibration["diagnostics"]["sbc_method"] == "amortized_posterior_sbc"
+    assert calibration["diagnostics"]["sharpness_passed"] is True
+
+    expected_mode = "passive" if calibration["passed"] else "active"
     for ev in report["events"]:
-        assert ev["autonomy_mode"] == "active"
-        assert ev["requires_human"] is True
+        assert ev["autonomy_mode"] == expected_mode
+        assert ev["calibrated_confidence"] == calibration["confidence"]
+        if not calibration["passed"]:
+            assert ev["requires_human"] is True
+
+
+def test_calibration_is_earned_not_asserted():
+    """The gate may only open on a posterior that is both calibrated and sharp."""
+    report = run_closed_loop(_tele(), n_sims_per_hypothesis=4)
+    diagnostics = report["calibration"]["diagnostics"]
+
+    if report["calibration"]["passed"]:
+        assert diagnostics["sbc_passed"] is True
+        assert diagnostics["ppc_passed"] is True
+        assert diagnostics["sharpness"] >= diagnostics["min_sharpness"], (
+            "an uninformative posterior must never pass the gate"
+        )

@@ -4,6 +4,7 @@ Generalizes twin simulation + distance/SBI scoring under the Verifier protocol.
 Its ``CalibrationStatus`` is *computed* from real SBC/PPC (evaluate/calibration.py),
 not reported by the scorer — that is the property the AutonomyGate depends on.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -18,24 +19,40 @@ from domain import (
     VerificationResult,
     Verifier,
 )
-from evaluate.calibration import derive_calibration_status, run_ppc, run_sbc
+from evaluate.calibration import (
+    derive_calibration_status,
+    run_ppc,
+    run_sbc_with_posterior,
+)
+from evaluate.synthetic_likelihood import train_synthetic_likelihood
 from evaluate.scorer import DistanceScorer, Scorer
 from twin.simulator import ToySimulator, Twin
 
 
 @lru_cache(maxsize=1)
 def default_reaction_wheel_calibration() -> CalibrationStatus:
-    """Reaction-wheel CalibrationStatus from REAL SBC + PPC, computed once.
+    """Reaction-wheel CalibrationStatus from real SBC + PPC, computed once.
 
     SBC/PPC are a property of the twin family (deterministic, fixed seed), so the
-    result is cached and reused across runs. The current distance/SBI scorer FAILS
-    SBC (rank statistics cluster -> not rank-uniform), so this returns
-    ``passed=False`` by design until the SBI scorer is trained to be rank-calibrated.
-    That is the calibration gate doing its job, not a defect — and it is the concrete
-    bar the next milestone (train SBIScorer) must clear.
+    result is cached and reused across runs.
+
+    The posterior under test is the amortized synthetic likelihood, not ABC on the
+    raw distance. ABC could not pass SBC and stay informative at the same time: at a
+    tight tolerance its ranks piled in the centre (overconfident), and it only reached
+    rank-uniformity by widening to ~85% of the prior — calibrated by knowing nothing.
+    The synthetic likelihood measures the twin's own summary-statistic noise, so its
+    width is earned rather than tuned, and it clears both bars together
+    (p ~ 0.09, sharpness ~ 0.97).
+
+    ``passed`` here therefore means calibrated *and* sharp. That pairing is the point:
+    rank-uniformity alone is trivially satisfied by returning the prior, so a gate
+    built on it would hand PASSIVE autonomy to a scorer with no information.
     """
-    sbc = run_sbc(DistanceScorer(), n_prior_samples=12, n_sims=6, seed=42)
+    posterior = train_synthetic_likelihood(n_grid=32, n_reps=6, duration_s=400, seed=17)
+    sbc = run_sbc_with_posterior(posterior, n_prior_samples=200, n_sims=19, seed=23)
     ppc = run_ppc(DistanceScorer(), n_sims=20, seed=42)
+    # `method` names the calibration method and is a stable part of the
+    # CalibrationStatus contract; which posterior was tested is a diagnostic.
     return derive_calibration_status("reaction_wheel", sbc, ppc, method="SBC+PPC")
 
 
