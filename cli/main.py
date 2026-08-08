@@ -40,20 +40,26 @@ def generate_data(out_dir: str = "data/synthetic", n_runs: int = 12):
 
 
 @app.command()
-def run(dataset: str, groq_key: Optional[str] = None):
-    """Run the closed loop (detect -> hypothesize -> twin-test -> score) on one CSV."""
+def run(dataset: str, groq_key: Optional[str] = None, detector: Optional[str] = None, scorer: Optional[str] = None):
+    """Run the closed loop (detect -> hypothesize -> twin-test -> score) on one CSV.
+
+    --detector zscore|telemanom   --scorer signature|distance|sbi  (defaults: zscore, signature)
+    """
+    from plan.components import build_detector, build_scorer
     df = pd.read_csv(dataset)
-    report = run_closed_loop(df, groq_api_key=groq_key)
+    report = run_closed_loop(df, groq_api_key=groq_key, detector=build_detector(detector), scorer=build_scorer(scorer))
     typer.echo(json.dumps(report, indent=2, default=str))
 
 
 @app.command()
-def run_all(data_dir: str = "data/synthetic", out_file: str = "data/reports.json", groq_key: Optional[str] = None):
+def run_all(data_dir: str = "data/synthetic", out_file: str = "data/reports.json", groq_key: Optional[str] = None, detector: Optional[str] = None, scorer: Optional[str] = None):
     """Run the closed loop over every synthetic CSV and write a combined report."""
+    from plan.components import build_detector, build_scorer
+    det, sc = build_detector(detector), build_scorer(scorer)
     reports = []
     for csv_path in sorted(Path(data_dir).glob("*.csv")):
         df = pd.read_csv(csv_path)
-        report = run_closed_loop(df, groq_api_key=groq_key)
+        report = run_closed_loop(df, groq_api_key=groq_key, detector=det, scorer=sc)
         report["source_file"] = csv_path.name
         reports.append(report)
         typer.echo(f"done: {csv_path.name} -> {report['n_events']} events")

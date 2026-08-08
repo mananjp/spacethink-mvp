@@ -68,6 +68,7 @@ class SignatureScorer:
     """
 
     name = "signature_v1"
+    expects_signatures = True  # planner passes signature vectors, not DataFrames
 
     def score(self, hyp: Hypothesis, real_sig: np.ndarray, sim_sigs: list[np.ndarray]) -> SimResult:
         mean_sig = np.mean(np.stack(sim_sigs), axis=0) if sim_sigs else np.zeros_like(real_sig)

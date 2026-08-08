@@ -71,26 +71,55 @@ def _real_signature(telemetry: pd.DataFrame) -> np.ndarray:
     return extract_signature(window, baseline)
 
 
+def _simulated_windows(
+    fault_params: tuple[FaultParameter, ...],
+    n_sims: int,
+    duration: int,
+) -> list[pd.DataFrame]:
+    """Post-baseline window of each simulated run, for DataFrame-based scorers
+    (DistanceScorer, SBIScorer). Uses the same event-localized window the
+    signature path uses, so those scorers are compared on the fault region
+    rather than the whole raw series (the original bug)."""
+    mapping = SimMapping(subsystem="reaction_wheel", fault_params=fault_params)
+    windows: list[pd.DataFrame] = []
+    for i in range(n_sims):
+        sim = ToySimulator().configure(mapping).run(duration_s=duration, seed=1000 + i)
+        _, win = split_baseline_window(sim)
+        windows.append(win.reset_index(drop=True))
+    return windows
+
+
 def run_closed_loop(
     telemetry: pd.DataFrame,
     run_id: str | None = None,
     n_sims_per_hypothesis: int = 20,
     store: RunStore | None = None,
     groq_api_key: str | None = None,
+    detector: object | None = None,
+    scorer: object | None = None,
 ) -> dict:
+    """Run the EXHYTE closed loop.
+
+    ``detector`` and ``scorer`` are injectable (defaults: baseline ``ZScoreDetector``
+    and event-window ``SignatureScorer``). Any object with the ``Scorer`` protocol
+    (``DistanceScorer``, ``SBIScorer``) is also accepted — the planner detects it by
+    the absence of an ``expects_signatures`` marker and feeds it the event-window
+    DataFrames instead of signature vectors. See ``plan/components.py``.
+    """
     run_id = run_id or str(uuid.uuid4())
     store = store or RunStore()
 
-    detector = ZScoreDetector()
+    detector = detector or ZScoreDetector()
     llm = StubLlm()
-    scorer = SignatureScorer()
+    scorer = scorer or SignatureScorer()
+    uses_signatures = getattr(scorer, "expects_signatures", False)
     council = LLMCouncil(api_key=groq_api_key)
 
     manifest = RunManifest(
         run_id=run_id,
         created_at=datetime.now(timezone.utc),
         dataset="synthetic",
-        detector_name=detector.name,
+        detector_name=getattr(detector, "name", type(detector).__name__),
         twin_name="ToySimulator",
         llm_name=llm.name,
     )
@@ -103,14 +132,16 @@ def run_closed_loop(
     if not events:
         return report
 
-    # One fault per run: build the real signature once (robust, and avoids
-    # rescoring every event with the same result).
-    real_sig = _real_signature(telemetry)
+    # One fault per run: build the event-localized real input once, and cache
+    # the per-mechanism simulated inputs (they depend only on fault parameters).
     duration = min(len(telemetry), 5000)
-
-    # Simulated-signature ensembles are identical for every event (they depend
-    # only on the candidate fault parameters), so compute each mechanism once.
-    sim_sig_cache: dict[tuple, list[np.ndarray]] = {}
+    if uses_signatures:
+        real_sig = _real_signature(telemetry)
+        sim_sig_cache: dict[tuple, list[np.ndarray]] = {}
+    else:
+        _, real_window_df = split_baseline_window(telemetry)
+        real_window_df = real_window_df.reset_index(drop=True)
+        sim_win_cache: dict[tuple, list[pd.DataFrame]] = {}
 
     for event in events:
         hypotheses = llm.generate(event)
@@ -119,26 +150,29 @@ def run_closed_loop(
         results = []
         for hyp in gated:
             key = _fault_key(hyp.fault_params)
-            if key not in sim_sig_cache:
-                sim_sig_cache[key] = _simulated_signatures(
-                    hyp.fault_params, n_sims_per_hypothesis, duration
-                )
-            results.append(scorer.score(hyp, real_sig, sim_sig_cache[key]))
+            if uses_signatures:
+                if key not in sim_sig_cache:
+                    sim_sig_cache[key] = _simulated_signatures(
+                        hyp.fault_params, n_sims_per_hypothesis, duration
+                    )
+                results.append(scorer.score(hyp, real_sig, sim_sig_cache[key]))
+            else:
+                if key not in sim_win_cache:
+                    sim_win_cache[key] = _simulated_windows(
+                        hyp.fault_params, n_sims_per_hypothesis, duration
+                    )
+                results.append(scorer.score(hyp, real_window_df, sim_win_cache[key]))
 
         ranked = sorted(normalize_posteriors(results), key=lambda r: -r.posterior)
         store.put(run_id, "hypotheses", gated, key=f"hyp_{event.id}")
         store.put(run_id, "sim_results", ranked, key=f"sim_{event.id}")
 
         top = ranked[0] if ranked else None
-        top_hyp = (
-            next((h for h in gated if h.id == top.hypothesis_id), None) if top else None
-        )
+        top_hyp = next((h for h in gated if h.id == top.hypothesis_id), None) if top else None
 
         # --- LLM Council Deliberation & Human Validation Gate ---
         consensus = council.deliberate(event, top_hyp, top)
-        validation_status = evaluate_human_gate(
-            event, consensus, top.posterior if top else None
-        )
+        validation_status = evaluate_human_gate(event, consensus, top.posterior if top else None)
 
         store.put(run_id, "council_consensus", consensus, key=f"council_{event.id}")
         store.put(run_id, "validation_status", validation_status, key=f"val_{event.id}")
