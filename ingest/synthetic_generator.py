@@ -4,6 +4,7 @@ we build the pipeline. Produces multichannel time series with injected faults
 (detect -> hypothesize -> test -> score) can be exercised end to end without
 any real satellite data.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -12,7 +13,9 @@ import pandas as pd
 RNG_SEED = 42
 
 
-def _base_signal(n: int, rng: np.random.Generator, freq: float = 0.01, noise: float = 0.05) -> np.ndarray:
+def _base_signal(
+    n: int, rng: np.random.Generator, freq: float = 0.01, noise: float = 0.05
+) -> np.ndarray:
     t = np.arange(n)
     signal = np.sin(2 * np.pi * freq * t) + 0.3 * np.sin(2 * np.pi * 3 * freq * t)
     return signal + rng.normal(0, noise, size=n)
@@ -31,9 +34,14 @@ def generate_reaction_wheel_telemetry(
     rng = np.random.default_rng(seed)
     t = np.arange(n_points)
 
-    speed = 4000 + 200 * _base_signal(n_points, rng, freq=0.002, noise=8)
-    current = 0.5 + 0.05 * _base_signal(n_points, rng, freq=0.002, noise=0.01)
-    temperature = 25 + 3 * _base_signal(n_points, rng, freq=0.0005, noise=0.2)
+    # Noise is added *before* the amplitude scaling, so keep the `noise=` args
+    # small: effective per-channel noise is (amplitude * noise). These give
+    # realistic magnitudes (speed ~12 rpm, current ~0.01 A, temp ~0.3 C) so the
+    # injected faults sit clearly above the noise floor. The twin in
+    # ``twin/simulator.py`` mirrors these levels.
+    speed = 4000 + 200 * _base_signal(n_points, rng, freq=0.002, noise=0.06)
+    current = 0.5 + 0.05 * _base_signal(n_points, rng, freq=0.002, noise=0.2)
+    temperature = 25 + 3 * _base_signal(n_points, rng, freq=0.0005, noise=0.1)
 
     if fault_type == "friction_increase":
         ramp = np.clip((t - fault_start) / (n_points - fault_start), 0, 1)
@@ -48,18 +56,22 @@ def generate_reaction_wheel_telemetry(
         speed[stiction_events] -= rng.uniform(300, 600, size=stiction_events.sum())
         current[stiction_events] += rng.uniform(0.3, 0.8, size=stiction_events.sum())
 
-    df = pd.DataFrame({
-        "t": t,
-        "wheel_speed_rpm": speed,
-        "wheel_current_a": current,
-        "wheel_temp_c": temperature,
-    })
+    df = pd.DataFrame(
+        {
+            "t": t,
+            "wheel_speed_rpm": speed,
+            "wheel_current_a": current,
+            "wheel_temp_c": temperature,
+        }
+    )
     df.attrs["fault_type"] = fault_type
     df.attrs["fault_start"] = fault_start if fault_type != "none" else None
     return df
 
 
-def generate_dataset(out_dir: str = "data/synthetic", n_runs: int = 12, seed: int = RNG_SEED) -> None:
+def generate_dataset(
+    out_dir: str = "data/synthetic", n_runs: int = 12, seed: int = RNG_SEED
+) -> None:
     from pathlib import Path
 
     rng = np.random.default_rng(seed)
