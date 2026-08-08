@@ -22,11 +22,20 @@ from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
 
-from domain import FaultParameter, RunManifest, SimMapping
+from domain import (
+    FaultParameter,
+    OversightMode,
+    OversightPolicy,
+    RunManifest,
+    SimMapping,
+    ValidationStatus,
+)
+from evaluate.autonomy_gate import decide_oversight
 from evaluate.human_gate import evaluate_human_gate
 from evaluate.llm_council import LLMCouncil
 from evaluate.scorer import SignatureScorer, normalize_posteriors
 from evaluate.signature import extract_signature, split_baseline_window
+from evaluate.verifiers import ReactionWheelVerifier
 from explore.detector import ZScoreDetector
 from hypothesize.generator import StubLlm
 from hypothesize.groq_explainer import generate_exhyte_timeline
@@ -97,6 +106,8 @@ def run_closed_loop(
     groq_api_key: str | None = None,
     detector: object | None = None,
     scorer: object | None = None,
+    oversight_policy: OversightPolicy | None = None,
+    calibration_status: object | None = None,
 ) -> dict:
     """Run the EXHYTE closed loop.
 
@@ -131,6 +142,20 @@ def run_closed_loop(
     report: dict = {"run_id": run_id, "n_events": len(events), "events": []}
     if not events:
         return report
+
+    # --- Calibration-gated autonomy (AutonomyGate) ---
+    # One CalibrationStatus per run: injected, else derived from the reaction-wheel
+    # Verifier's real SBC/PPC (cached, deterministic). The gate reads ONLY this
+    # status and the policy -- never raw scores or domain data.
+    policy = oversight_policy or OversightPolicy()
+    cal_status = calibration_status or ReactionWheelVerifier().calibration_status()
+    report["calibration"] = {
+        "domain": cal_status.domain,
+        "passed": cal_status.passed,
+        "confidence": cal_status.confidence,
+        "method": cal_status.method,
+    }
+    store.put(run_id, "calibration_status", cal_status, key="calibration")
 
     # One fault per run: build the event-localized real input once, and cache
     # the per-mechanism simulated inputs (they depend only on fault parameters).
@@ -173,6 +198,14 @@ def run_closed_loop(
         # --- LLM Council Deliberation & Human Validation Gate ---
         consensus = council.deliberate(event, top_hyp, top)
         validation_status = evaluate_human_gate(event, consensus, top.posterior if top else None)
+
+        # AutonomyGate: oversight mode from the calibration status alone.
+        oversight_mode = decide_oversight(cal_status, policy)
+        requires_human = (
+            validation_status == ValidationStatus.ESCALATED_PENDING_HUMAN
+            or oversight_mode == OversightMode.ACTIVE
+        )
+        store.put(run_id, "oversight_mode", oversight_mode, key=f"oversight_{event.id}")
 
         store.put(run_id, "council_consensus", consensus, key=f"council_{event.id}")
         store.put(run_id, "validation_status", validation_status, key=f"val_{event.id}")
@@ -222,6 +255,11 @@ def run_closed_loop(
                     ],
                 },
                 "validation_status": validation_status.value,
+                "autonomy_mode": oversight_mode.value,
+                "calibrated_confidence": cal_status.confidence,
+                "calibration_passed": cal_status.passed,
+                "calibration_method": cal_status.method,
+                "requires_human": requires_human,
                 "ai_timeline": ai_timeline,
             }
         )

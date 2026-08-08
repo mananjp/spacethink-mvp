@@ -11,7 +11,7 @@ from typing import Protocol
 import numpy as np
 import pandas as pd
 
-from domain import FaultParameter, SimMapping
+from domain import CalibrationStatus, FaultParameter, SimMapping
 from twin.simulator import ToySimulator
 
 
@@ -222,4 +222,42 @@ def run_ppc(
         coverage_fractions=coverages,
         passed=passed,
         diagnostics={"overall_coverage": float(coverage_frac)},
+    )
+
+
+def derive_calibration_status(
+    domain: str,
+    sbc: SBCResult,
+    ppc: PPCResult,
+    method: str = "SBC+PPC",
+) -> CalibrationStatus:
+    """Reduce real SBC + PPC results to a domain-agnostic ``CalibrationStatus``.
+
+    The ``confidence`` field is *derived from the calibration diagnostics* — never
+    self-reported by the scorer — which is the property the AutonomyGate relies on:
+
+        confidence = 0.5 * ppc_coverage + 0.5 * sbc_uniformity_score
+        sbc_uniformity_score = min(1.0, uniformity_p_value / 0.05)   # in [0, 1]
+
+    ``passed`` requires *both* SBC (posterior rank-uniformity) and PPC (predictive
+    coverage) to pass; a scorer that is not rank-calibrated fails here regardless of
+    how confident it claims to be. Fails closed on empty coverage.
+    """
+    coverage = float(np.mean(ppc.coverage_fractions)) if ppc.coverage_fractions else 0.0
+    sbc_uniformity_score = min(1.0, float(sbc.uniformity_p_value) / 0.05)
+    confidence = round(0.5 * coverage + 0.5 * sbc_uniformity_score, 4)
+    passed = bool(sbc.passed and ppc.passed)
+    diagnostics = {
+        "sbc_passed": bool(sbc.passed),
+        "sbc_uniformity_p_value": round(float(sbc.uniformity_p_value), 4),
+        "ppc_passed": bool(ppc.passed),
+        "ppc_coverage": round(coverage, 4),
+        "sbc_rank_histogram": list(sbc.rank_histogram),
+    }
+    return CalibrationStatus(
+        domain=domain,
+        passed=passed,
+        confidence=confidence,
+        method=method,
+        diagnostics=diagnostics,
     )

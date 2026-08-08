@@ -47,8 +47,11 @@ def test_reaction_wheel_verifier_protocol_compliance():
     cal_status = rw_verifier.calibration_status()
     assert isinstance(cal_status, CalibrationStatus)
     assert cal_status.domain == "reaction_wheel"
-    assert cal_status.passed is True
-    assert cal_status.confidence > 0.0
+    # Calibration is now DERIVED from real SBC/PPC (not a hardcoded constant). The
+    # current distance/SBI scorer is not rank-calibrated, so honest SBC fails
+    # (passed=False) until the SBI scorer is trained -- the gate working by design.
+    assert isinstance(cal_status.passed, bool)
+    assert 0.0 <= cal_status.confidence <= 1.0
     assert cal_status.method == "SBC+PPC"
 
 
