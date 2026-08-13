@@ -285,10 +285,25 @@ def run_ppc(
     channels: list[str] | None = None,
     seed: int = 42,
 ) -> PPCResult:
-    """Run Posterior Predictive Check for a scorer/family pair.
+    """Twin self-consistency check. **Not** a posterior predictive check.
 
-    Generates simulated data under a known parameter and checks that
-    summary statistics of the simulated data cover the real-data statistics.
+    .. warning::
+       Despite the name and the ``scorer`` parameter, this consults neither. It
+       generates data from the twin at ``param_value`` and checks that summary
+       statistics of *the same twin at the same parameter* fall inside their own 95%
+       band — a tautology. Measured: it returns ``passed=True`` with coverage 1.0 for a
+       scorer whose distance function is a constant zero, at every parameter value
+       tried including a physically absurd friction of 50.0.
+
+       It must never feed :func:`derive_calibration_status`. It did, contributing 0.4 of
+       the confidence weight that opens the AutonomyGate, which meant one of the three
+       legs of the calibration claim could not fail. Use
+       :func:`run_ppc_with_posterior`, which is a genuine function of the posterior
+       under test.
+
+    What it does measure honestly is twin run-to-run stability: whether repeated runs
+    at fixed parameters stay in a consistent envelope. That is a useful smoke test for
+    the simulator, and the only thing this result may be read as.
     """
     rng = np.random.default_rng(seed)
     channels = channels or ["wheel_speed_rpm", "wheel_current_a", "wheel_temp_c"]
@@ -353,6 +368,222 @@ def run_ppc(
     )
 
 
+def _prior_draw(posterior: Any) -> Callable[[np.random.Generator], float]:
+    """The posterior object's own prior sampler, falling back to uniform support.
+
+    ``SyntheticLikelihoodPosterior`` and the NPE posteriors carry a uniform prior
+    described by ``prior_low``/``prior_high``, which is the fallback. A posterior
+    whose prior is not uniform supplies ``prior_sample`` instead — without this hook,
+    calibration silently probes the wrong prior and even an exact posterior looks
+    miscalibrated.
+    """
+    explicit = getattr(posterior, "prior_sample", None)
+    if callable(explicit):
+        return lambda rng: float(explicit(rng))
+
+    low = float(posterior.prior_low)
+    high = float(posterior.prior_high)
+    return lambda rng: float(rng.uniform(low, high))
+
+
+def _pit_uniformity_p(pit_values: np.ndarray, n_bins: int) -> float:
+    """Chi-squared uniformity p-value for PIT values, on a coarse fixed grid.
+
+    Reuses the SBC rank machinery by mapping each PIT onto one of ``n_bins`` bins.
+    Coarse bins keep the chi-squared approximation honest inside a stratum, where the
+    trial count is a fraction of the total.
+    """
+    ranks = np.clip((np.asarray(pit_values, dtype=float) * n_bins).astype(int), 0, n_bins - 1)
+    return float(uniformity_p_value(ranks, n_posterior_samples=n_bins - 1))
+
+
+def posterior_predictive_pit(
+    posterior: Any,
+    n_trials: int = 200,
+    n_predictive_draws: int = 39,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Probability-integral-transform values for a posterior predictive distribution.
+
+    For each trial: draw θ* from the prior, simulate an observation x_obs ~ p(x|θ*)
+    **and an independent replicate** x_rep ~ p(x|θ*) at the same θ*, condition the
+    posterior on x_obs, push its draws back through the simulator, and record where
+    x_rep falls in that predictive sample.
+
+    The replicate is what makes this a real check. Scoring x_obs inside a predictive
+    distribution that was itself conditioned on x_obs uses the data twice, which is
+    conservative and non-uniform even for an exact posterior — the standard objection
+    to naive posterior-predictive p-values. An independent replicate drawn from the
+    same ground truth removes the double-use, so an exact posterior yields uniform
+    PIT values and the check has an unambiguous null.
+
+    Returns:
+        ``(pit, observations)`` — a ``(n_trials, n_stats)`` array of PIT values in
+        [0, 1], one column per summary statistic returned by ``posterior.simulate``,
+        and the matching ``(n_trials, n_stats)`` observations. The observations are
+        returned because marginal PIT uniformity is not sufficient: they are what the
+        conditional check in :func:`run_ppc_with_posterior` stratifies on.
+    """
+    if n_trials < 1:
+        raise ValueError("n_trials must be >= 1")
+    if n_predictive_draws < 1:
+        raise ValueError("n_predictive_draws must be >= 1")
+
+    rng = np.random.default_rng(seed)
+    draw_theta = _prior_draw(posterior)
+
+    rows: list[np.ndarray] = []
+    observations: list[np.ndarray] = []
+    for _ in range(n_trials):
+        theta_true = draw_theta(rng)
+        observed = np.asarray(posterior.simulate(theta_true, rng), dtype=float).ravel()
+        replicate = np.asarray(posterior.simulate(theta_true, rng), dtype=float).ravel()
+        observations.append(observed)
+
+        thetas = np.asarray(
+            posterior.sample(observed, n_predictive_draws, rng), dtype=float
+        ).ravel()
+        if thetas.size != n_predictive_draws:
+            raise ValueError(
+                f"posterior.sample returned {thetas.size} draws, "
+                f"expected {n_predictive_draws}"
+            )
+
+        predictive = np.array(
+            [
+                np.asarray(posterior.simulate(float(t), rng), dtype=float).ravel()
+                for t in thetas
+            ]
+        )
+
+        below = np.count_nonzero(predictive < replicate[None, :], axis=0)
+        tied = np.count_nonzero(predictive == replicate[None, :], axis=0)
+        # Randomised tie-breaking, matching sbc_ranks, keeps PIT uniform under
+        # discrete or duplicated draws.
+        jitter = np.array([int(rng.integers(0, t + 1)) if t else 0 for t in tied])
+        rows.append((below + jitter) / float(n_predictive_draws))
+
+    return np.array(rows), np.array(observations)
+
+
+def run_ppc_with_posterior(
+    posterior: Any,
+    n_trials: int = 200,
+    n_predictive_draws: int = 39,
+    seed: int = 42,
+    family: str = "bearing_friction_increase",
+    alpha: float = 0.01,
+    interval: float = 0.95,
+    n_strata: int = 4,
+    pit_bins: int = 5,
+    stat_names: Sequence[str] | None = None,
+) -> PPCResult:
+    """Native posterior predictive check — a function of the posterior under test.
+
+    Unlike :func:`run_ppc`, every quantity here is generated *through* the posterior:
+    its draws choose the parameters the simulator runs at, so a posterior that ignores
+    the observation, sits in the wrong place, or carries far too much spread produces a
+    predictive distribution that misplaces the replicate.
+
+    ``passed`` requires PIT uniformity **conditional on the observation**, not merely
+    marginal uniformity. That distinction is the whole check. A posterior that returns
+    the prior regardless of the data is *marginally* perfect — ranking a prior-predictive
+    replicate among prior-predictive draws is uniform by construction — so a pooled test
+    accepts it, exactly as rank-uniformity alone accepts a prior-returning posterior in
+    SBC. Stratifying by the observation exposes it: in the strata where the observation
+    ran high, an unresponsive predictive sits too low, and vice versa, errors that cancel
+    when pooled and do not cancel within a stratum.
+
+    ``coverage_fractions`` carries the interpretable companion: how often the replicate
+    landed inside the central ``interval`` of the predictive sample, which should sit
+    near ``interval`` itself.
+
+    **Known limit on power.** Simulator noise is common to the true and the estimated
+    predictive distribution, so it dilutes posterior error: a posterior ten times too
+    *narrow* still yields a predictive only slightly narrower than the truth, and this
+    check will not reliably reject it. Overconfidence is SBC's and sharpness's job (see
+    :func:`run_sbc_with_posterior` and :func:`posterior_sharpness`); a predictive check
+    answers the complementary question of whether simulating at the inferred parameters
+    reproduces the observed data at all. The gate's three legs are complementary rather
+    than redundant, and none is sufficient alone.
+    """
+    if not 0.0 < interval < 1.0:
+        raise ValueError("interval must lie in (0, 1)")
+    if n_strata < 1:
+        raise ValueError("n_strata must be >= 1")
+
+    pit, observations = posterior_predictive_pit(
+        posterior,
+        n_trials=n_trials,
+        n_predictive_draws=n_predictive_draws,
+        seed=seed,
+    )
+    n_stats = pit.shape[1]
+    names = (
+        list(stat_names) if stat_names is not None else [f"stat_{i}" for i in range(n_stats)]
+    )
+
+    tail = (1.0 - interval) / 2.0
+    coverage_fractions = [
+        float(np.mean((pit[:, i] >= tail) & (pit[:, i] <= 1.0 - tail)))
+        for i in range(n_stats)
+    ]
+
+    # Marginal uniformity — reported, but never the pass criterion on its own.
+    marginal_p = [_pit_uniformity_p(pit[:, i], n_bins=pit_bins) for i in range(n_stats)]
+
+    # Conditional uniformity: within each stratum of the observation, the replicate
+    # must still land at a uniform quantile. This is the criterion the prior cannot
+    # satisfy — a predictive that does not move with the observation is misplaced in
+    # every stratum, even though those errors cancel when pooled.
+    conditional_p: list[float] = []
+    for i in range(n_stats):
+        order = np.argsort(observations[:, i], kind="stable")
+        for chunk in np.array_split(order, n_strata):
+            if chunk.size >= pit_bins:
+                conditional_p.append(_pit_uniformity_p(pit[chunk, i], n_bins=pit_bins))
+
+    all_p = marginal_p + conditional_p
+    # Bonferroni across every test performed. Chosen for a stable null: with dozens of
+    # correlated statistics an uncorrected threshold rejects a perfect posterior often
+    # enough to make the gate flap. Strictness comes from requiring all three legs of
+    # the gate plus sharpness, not from this one threshold.
+    corrected_alpha = alpha / max(len(all_p), 1)
+    passed = bool(min(all_p) > corrected_alpha)
+
+    return PPCResult(
+        family=family,
+        summary_stat_names=names,
+        # These three carry PIT summaries, not telemetry values: this check spans many
+        # observations, so there is no single "real" summary statistic to report. Mean
+        # PIT observed, the 0.5 a calibrated posterior should produce, and the observed
+        # spread. Units are quantiles in [0, 1].
+        real_stats=[float(np.mean(pit[:, i])) for i in range(n_stats)],
+        predicted_stats_mean=[0.5] * n_stats,
+        predicted_stats_std=[float(np.std(pit[:, i])) for i in range(n_stats)],
+        coverage_fractions=coverage_fractions,
+        passed=passed,
+        diagnostics={
+            "method": "replicate_pit_posterior_predictive",
+            "posterior": type(posterior).__name__,
+            "n_trials": n_trials,
+            "n_predictive_draws": n_predictive_draws,
+            "interval": interval,
+            "alpha": alpha,
+            "bonferroni_alpha": corrected_alpha,
+            "n_strata": n_strata,
+            "pit_bins": pit_bins,
+            "n_tests": len(all_p),
+            "marginal_pit_p_values": [round(p, 6) for p in marginal_p],
+            "min_marginal_pit_p": round(float(min(marginal_p)), 6),
+            "min_conditional_pit_p": (
+                round(float(min(conditional_p)), 6) if conditional_p else None
+            ),
+            "overall_coverage": round(float(np.mean(coverage_fractions)), 4),
+        },
+    )
+
+
 def run_sbc_with_posterior(
     posterior: Any,
     n_prior_samples: int = 200,
@@ -374,9 +605,9 @@ def run_sbc_with_posterior(
     low = float(posterior.prior_low)
     high = float(posterior.prior_high)
     per_trial_sharpness: list[float] = []
-
-    def prior_sampler(rng: np.random.Generator) -> float:
-        return float(rng.uniform(low, high))
+    # Same hook as the predictive check: probe the posterior's own prior, not an
+    # assumed-uniform one. Unchanged for uniform-prior posteriors.
+    prior_sampler = _prior_draw(posterior)
 
     def simulator(theta: float, rng: np.random.Generator) -> Any:
         return posterior.simulate(theta, rng)

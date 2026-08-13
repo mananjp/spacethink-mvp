@@ -21,7 +21,7 @@ from domain import (
 )
 from evaluate.calibration import (
     derive_calibration_status,
-    run_ppc,
+    run_ppc_with_posterior,
     run_sbc_with_posterior,
 )
 from evaluate.synthetic_likelihood import train_synthetic_likelihood
@@ -47,10 +47,27 @@ def default_reaction_wheel_calibration() -> CalibrationStatus:
     ``passed`` here therefore means calibrated *and* sharp. That pairing is the point:
     rank-uniformity alone is trivially satisfied by returning the prior, so a gate
     built on it would hand PASSIVE autonomy to a scorer with no information.
+
+    Both legs now measure **the same posterior**. The PPC leg previously called
+    ``run_ppc(DistanceScorer())``, which consulted neither this posterior nor that
+    scorer: it compared the twin at a fixed parameter against the same twin at the same
+    parameter, so it returned ``passed=True`` at coverage 1.0 for any input — a
+    constant-zero distance function at a physically absurd friction of 50.0 included —
+    while carrying 0.4 of the confidence weight that opens the gate. One of the three
+    legs holding up the calibration claim could not fail.
+
+    The three legs are complementary rather than redundant, which is why all three are
+    required. SBC catches overconfidence, and the predictive check cannot: simulator
+    noise is common to the true and estimated predictive distributions, so a posterior
+    10x too narrow yields a predictive only ~18% too narrow. Conversely SBC's
+    rank-uniformity passes a posterior that ignores its input entirely, and the
+    conditional predictive check rejects it outright.
     """
     posterior = train_synthetic_likelihood(n_grid=32, n_reps=6, duration_s=400, seed=17)
     sbc = run_sbc_with_posterior(posterior, n_prior_samples=200, n_sims=19, seed=23)
-    ppc = run_ppc(DistanceScorer(), n_sims=20, seed=42)
+    ppc = run_ppc_with_posterior(
+        posterior, n_trials=200, n_predictive_draws=39, seed=42, family=sbc.family
+    )
     # `method` names the calibration method and is a stable part of the
     # CalibrationStatus contract; which posterior was tested is a diagnostic.
     return derive_calibration_status("reaction_wheel", sbc, ppc, method="SBC+PPC")
