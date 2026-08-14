@@ -53,6 +53,38 @@ class DistanceScorer:
         )
 
 
+class SignatureScorer:
+    """Fault-signature scorer — the fix for the diagnosis loop.
+
+    DistanceScorer compares whole raw telemetry series and is dominated by noise,
+    so it cannot discriminate the fault mechanisms (and "diagnoses" faults on
+    nominal data). SignatureScorer instead compares fault *signatures* (see
+    evaluate/signature.py): the real event's signature vs. each hypothesis's
+    twin-simulated signature. Kept ALONGSIDE DistanceScorer (which the
+    counterfactual/verifier/CI paths still depend on), not a replacement.
+
+    Different call shape: score(hyp, real_sig, sim_sigs) takes pre-computed
+    signature vectors, not raw DataFrames — the planner extracts them.
+    """
+
+    name = "signature_v1"
+    expects_signatures = True  # planner passes signature vectors, not DataFrames
+
+    def score(self, hyp: Hypothesis, real_sig: np.ndarray, sim_sigs: list[np.ndarray]) -> SimResult:
+        mean_sig = np.mean(np.stack(sim_sigs), axis=0) if sim_sigs else np.zeros_like(real_sig)
+        distance = float(np.linalg.norm(real_sig - mean_sig))
+        return SimResult(
+            hypothesis_id=hyp.id,
+            distance=distance,
+            posterior=0.0,  # filled in by normalize_posteriors across all hypotheses
+            n_sims=len(sim_sigs),
+            diagnostics={
+                "real_signature": [round(x, 4) for x in real_sig.tolist()],
+                "sim_signature": [round(x, 4) for x in mean_sig.tolist()],
+            },
+        )
+
+
 def normalize_posteriors(results: list[SimResult]) -> list[SimResult]:
     """Convert distances into a softmax-style posterior (lower distance -> higher belief)."""
     if not results:

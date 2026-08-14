@@ -1,4 +1,5 @@
 """Unit tests for Phases 1 through 6 implementation modules."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -52,10 +53,12 @@ def test_content_addressed_store_and_ledger(tmp_path):
 def test_basilisk_twin():
     from twin.basilisk_twin import BasiliskTwin
 
-    twin = BasiliskTwin().configure(SimMapping(
-        subsystem="reaction_wheel",
-        fault_params=(FaultParameter("friction", 1.0), FaultParameter("dropout_rate", 0.02)),
-    ))
+    twin = BasiliskTwin().configure(
+        SimMapping(
+            subsystem="reaction_wheel",
+            fault_params=(FaultParameter("friction", 1.0), FaultParameter("dropout_rate", 0.02)),
+        )
+    )
     df = twin.run(duration_s=500, seed=42)
     assert len(df) == 500
     assert "wheel_speed_rpm" in df.columns
@@ -69,8 +72,13 @@ def test_sbi_scorer_and_calibration():
     from twin.simulator import ToySimulator
 
     hyp = Hypothesis(
-        id=new_id(), event_id="e", text="test", mechanism="bearing_friction_increase",
-        fault_params=(FaultParameter("friction", 0.5),), prior=0.5, generator="template"
+        id=new_id(),
+        event_id="e",
+        text="test",
+        mechanism="bearing_friction_increase",
+        fault_params=(FaultParameter("friction", 0.5),),
+        prior=0.5,
+        generator="template",
     )
 
     twin = ToySimulator().configure(SimMapping("reaction_wheel", hyp.fault_params))
@@ -97,24 +105,36 @@ def test_esa_metrics_scorer():
     assert rep.alarming_precision > 0.5
 
     hyp = Hypothesis(
-        id=new_id(), event_id="e", text="test", mechanism="bearing_friction_increase",
-        fault_params=(FaultParameter("friction", 0.5),), prior=0.5, generator="template"
+        id=new_id(),
+        event_id="e",
+        text="test",
+        mechanism="bearing_friction_increase",
+        fault_params=(FaultParameter("friction", 0.5),),
+        prior=0.5,
+        generator="template",
     )
 
-    real = pd.DataFrame({
-        "wheel_speed_rpm": [4000] * 500,
-        "wheel_current_a": [0.5] * 500,
-        "wheel_temp_c": [25] * 500,
-    })
+    real = pd.DataFrame(
+        {
+            "wheel_speed_rpm": [4000] * 500,
+            "wheel_current_a": [0.5] * 500,
+            "wheel_temp_c": [25] * 500,
+        }
+    )
     scorer = ESAMetricsScorer()
     res = scorer.score(hyp, real, [real.copy()])
     assert res.distance >= 0.0
 
 
-def test_opssat_ad_ingest():
+def test_opssat_ad_ingest(tmp_path):
+    # Must write to a temp cache, not the committed data/opssat_ad/. The generator is
+    # deterministic for a given seed but not across numpy/pandas versions, so writing
+    # into the repo left every teammate with spurious `data/` diffs after a test run.
     from ingest.opssat_ad import generate_synthetic_opssat, opssat_to_pipeline_format
 
-    dataset = generate_synthetic_opssat(n_channels=3, n_points=500)
+    dataset = generate_synthetic_opssat(
+        cache_dir=tmp_path / "opssat_ad", n_channels=3, n_points=500
+    )
     assert dataset.n_channels == 3
     df = opssat_to_pipeline_format(dataset)
     assert len(df) == 500
@@ -135,9 +155,14 @@ def test_telecommand_explainer():
     from hypothesize.telecommand_explainer import TelecommandExplainer
 
     event = EventOfInterest(
-        id=new_id(), run_id="r", channel="wheel_speed_rpm",
-        start_ts=datetime.now(timezone.utc), end_ts=datetime.now(timezone.utc),
-        score=1.8, severity=Severity.LOW, detector_name="test"
+        id=new_id(),
+        run_id="r",
+        channel="wheel_speed_rpm",
+        start_ts=datetime.now(timezone.utc),
+        end_ts=datetime.now(timezone.utc),
+        score=1.8,
+        severity=Severity.LOW,
+        detector_name="test",
     )
     explainer = TelecommandExplainer()
     res = explainer.explain(event)
@@ -148,13 +173,23 @@ def test_eig_planner():
     from plan.eig_planner import EIGPlanner
 
     event = EventOfInterest(
-        id=new_id(), run_id="r", channel="wheel_speed_rpm",
-        start_ts=datetime.now(timezone.utc), end_ts=datetime.now(timezone.utc),
-        score=4.0, severity=Severity.HIGH, detector_name="test"
+        id=new_id(),
+        run_id="r",
+        channel="wheel_speed_rpm",
+        start_ts=datetime.now(timezone.utc),
+        end_ts=datetime.now(timezone.utc),
+        score=4.0,
+        severity=Severity.HIGH,
+        detector_name="test",
     )
     hyp = Hypothesis(
-        id=new_id(), event_id=event.id, text="test", mechanism="bearing_friction_increase",
-        fault_params=(), prior=0.5, generator="template"
+        id=new_id(),
+        event_id=event.id,
+        text="test",
+        mechanism="bearing_friction_increase",
+        fault_params=(),
+        prior=0.5,
+        generator="template",
     )
     sim = SimResult(hypothesis_id=hyp.id, distance=1.0, posterior=0.8, n_sims=5)
 
@@ -167,15 +202,33 @@ def test_eig_planner():
 def test_counterfactual_replay():
     from evaluate.counterfactual import run_counterfactual
 
-    real = pd.DataFrame({
-        "wheel_speed_rpm": [4000] * 200,
-        "wheel_current_a": [0.5] * 200,
-        "wheel_temp_c": [25] * 200,
-    })
-    orig_hyp = Hypothesis(id=new_id(), event_id="e", text="", mechanism="bearing_friction_increase", fault_params=(FaultParameter("friction", 0.5),), prior=0.5, generator="template")
+    real = pd.DataFrame(
+        {
+            "wheel_speed_rpm": [4000] * 200,
+            "wheel_current_a": [0.5] * 200,
+            "wheel_temp_c": [25] * 200,
+        }
+    )
+    orig_hyp = Hypothesis(
+        id=new_id(),
+        event_id="e",
+        text="",
+        mechanism="bearing_friction_increase",
+        fault_params=(FaultParameter("friction", 0.5),),
+        prior=0.5,
+        generator="template",
+    )
     orig_sim = SimResult(hypothesis_id=orig_hyp.id, distance=0.2, posterior=0.8, n_sims=5)
 
-    alt_hyp = Hypothesis(id=new_id(), event_id="e", text="", mechanism="encoder_dropout", fault_params=(FaultParameter("dropout_rate", 0.05),), prior=0.3, generator="template")
+    alt_hyp = Hypothesis(
+        id=new_id(),
+        event_id="e",
+        text="",
+        mechanism="encoder_dropout",
+        fault_params=(FaultParameter("dropout_rate", 0.05),),
+        prior=0.3,
+        generator="template",
+    )
 
     res = run_counterfactual(real, orig_hyp, orig_sim, [alt_hyp])
     assert res.verdict in ("consistent", "inconsistent", "ambiguous")
@@ -184,7 +237,15 @@ def test_counterfactual_replay():
 def test_claim_pack_exporter(tmp_path):
     from cli.claim_pack import build_evidence_graph, export_claim_pack_json, export_claim_pack_text
 
-    hyp = Hypothesis(id=new_id(), event_id="e", text="", mechanism="bearing_friction_increase", fault_params=(FaultParameter("friction", 0.5),), prior=0.5, generator="template")
+    hyp = Hypothesis(
+        id=new_id(),
+        event_id="e",
+        text="",
+        mechanism="bearing_friction_increase",
+        fault_params=(FaultParameter("friction", 0.5),),
+        prior=0.5,
+        generator="template",
+    )
     sim = SimResult(hypothesis_id=hyp.id, distance=0.2, posterior=0.8, n_sims=5)
 
     graph = build_evidence_graph("run-1", [hyp], [sim])
@@ -198,11 +259,13 @@ def test_claim_pack_exporter(tmp_path):
 def test_twin_calibrator():
     from twin.calibrator import calibrate_twin
 
-    real = pd.DataFrame({
-        "wheel_speed_rpm": [4000] * 300,
-        "wheel_current_a": [0.5] * 300,
-        "wheel_temp_c": [25] * 300,
-    })
+    real = pd.DataFrame(
+        {
+            "wheel_speed_rpm": [4000] * 300,
+            "wheel_current_a": [0.5] * 300,
+            "wheel_temp_c": [25] * 300,
+        }
+    )
     res = calibrate_twin("cust-1", real, n_iterations=5)
     assert res.customer_id == "cust-1"
 
@@ -210,8 +273,26 @@ def test_twin_calibrator():
 def test_fleet_clustering():
     from evaluate.clustering import cluster_fleet_events
 
-    ev1 = EventOfInterest(id=new_id(), run_id="r1", channel="wheel_speed_rpm", start_ts=datetime.now(timezone.utc), end_ts=datetime.now(timezone.utc), score=4.0, severity=Severity.HIGH, detector_name="d")
-    ev2 = EventOfInterest(id=new_id(), run_id="r2", channel="wheel_speed_rpm", start_ts=datetime.now(timezone.utc), end_ts=datetime.now(timezone.utc), score=4.1, severity=Severity.HIGH, detector_name="d")
+    ev1 = EventOfInterest(
+        id=new_id(),
+        run_id="r1",
+        channel="wheel_speed_rpm",
+        start_ts=datetime.now(timezone.utc),
+        end_ts=datetime.now(timezone.utc),
+        score=4.0,
+        severity=Severity.HIGH,
+        detector_name="d",
+    )
+    ev2 = EventOfInterest(
+        id=new_id(),
+        run_id="r2",
+        channel="wheel_speed_rpm",
+        start_ts=datetime.now(timezone.utc),
+        end_ts=datetime.now(timezone.utc),
+        score=4.1,
+        severity=Severity.HIGH,
+        detector_name="d",
+    )
 
     clusters = cluster_fleet_events([ev1, ev2])
     assert isinstance(clusters, list)
@@ -221,7 +302,11 @@ def test_knowledge_rag(tmp_path):
     from knowledge.rag import KnowledgeBase, Document
 
     kb = KnowledgeBase(persist_dir=tmp_path / "chroma", collection_name="test_kb")
-    doc = Document(id="doc1", text="Reaction wheel bearing friction increase causes thermal rise.", source="manual")
+    doc = Document(
+        id="doc1",
+        text="Reaction wheel bearing friction increase causes thermal rise.",
+        source="manual",
+    )
     kb.ingest(doc)
 
     res = kb.retrieve("bearing friction thermal", n_results=1)

@@ -8,6 +8,7 @@ Two components:
 1. Amortized NPE per fault family (sbi v0.26.x)
 2. Amortized Bayesian model comparison across hypotheses (neural classifier / BayesFlow)
 """
+
 from __future__ import annotations
 
 import warnings
@@ -22,6 +23,7 @@ from domain import Hypothesis, SimResult
 try:
     import sbi  # type: ignore[import-untyped]
     from sbi.inference import SNPE  # type: ignore[import-untyped]
+
     _HAS_SBI = True
 except ImportError:
     _HAS_SBI = False
@@ -40,14 +42,20 @@ def _extract_summary_stats(df: pd.DataFrame, channels: list[str] | None = None) 
     features = []
     for ch in channels:
         series = df[ch].to_numpy(dtype=float)
-        features.extend([
-            np.mean(series),
-            np.std(series),
-            float(_safe_skew(series)),
-            float(_safe_kurtosis(series)),
-            float(_trend_slope(series)),
-        ])
+        features.extend(
+            [
+                np.mean(series),
+                np.std(series),
+                float(_safe_skew(series)),
+                float(_safe_kurtosis(series)),
+                float(_trend_slope(series)),
+            ]
+        )
     return np.array(features)
+
+
+#: Public alias — other inference modules build on the same summary statistics.
+extract_summary_stats = _extract_summary_stats
 
 
 def _safe_skew(x: np.ndarray) -> float:
@@ -116,10 +124,13 @@ class SBIScorer:
                 posterior_path = family_dir / "posterior.pkl"
                 if posterior_path.exists():
                     import pickle
+
                     with open(posterior_path, "rb") as f:
                         self._posterior_cache[family_dir.name] = pickle.load(f)
 
-    def score(self, hyp: Hypothesis, real: pd.DataFrame, simulated: list[pd.DataFrame]) -> SimResult:
+    def score(
+        self, hyp: Hypothesis, real: pd.DataFrame, simulated: list[pd.DataFrame]
+    ) -> SimResult:
         """Score a hypothesis against real telemetry using SBI or fallback."""
         if _HAS_SBI and hyp.mechanism in self._posterior_cache:
             return self._score_npe(hyp, real)
@@ -131,6 +142,7 @@ class SBIScorer:
         obs = _extract_summary_stats(real, self.channels)
 
         import torch  # type: ignore[import-untyped]
+
         obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
         samples = posterior.sample((1000,), x=obs_tensor)
 
@@ -151,7 +163,9 @@ class SBIScorer:
             },
         )
 
-    def _score_kernel(self, hyp: Hypothesis, real: pd.DataFrame, simulated: list[pd.DataFrame]) -> SimResult:
+    def _score_kernel(
+        self, hyp: Hypothesis, real: pd.DataFrame, simulated: list[pd.DataFrame]
+    ) -> SimResult:
         """Fallback scoring using summary-statistic kernel density comparison.
 
         Computes Gaussian kernel density in summary-statistic space between
@@ -171,8 +185,8 @@ class SBIScorer:
 
         # Gaussian kernel density estimate at the real observation
         diffs = sim_norm - real_norm
-        sq_dists = np.sum(diffs ** 2, axis=1)
-        kernel_vals = np.exp(-sq_dists / (2 * self.bandwidth ** 2))
+        sq_dists = np.sum(diffs**2, axis=1)
+        kernel_vals = np.exp(-sq_dists / (2 * self.bandwidth**2))
         log_density = float(np.log(kernel_vals.mean() + 1e-30))
 
         distance = float(np.mean(np.sqrt(sq_dists)))

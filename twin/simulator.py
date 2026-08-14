@@ -5,6 +5,7 @@ doc: an analytic ODE approximation of reaction-wheel dynamics that runs in
 milliseconds, so the Testing/Hypothesis layers can be built and tested before
 a high-fidelity simulator (Basilisk, per the research) is wired in later.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,11 +18,9 @@ from domain import SimMapping
 
 
 class Twin(Protocol):
-    def configure(self, mapping: SimMapping) -> "Twin":
-        ...
+    def configure(self, mapping: SimMapping) -> "Twin": ...
 
-    def run(self, duration_s: float, seed: int) -> pd.DataFrame:
-        ...
+    def run(self, duration_s: float, seed: int) -> pd.DataFrame: ...
 
 
 @dataclass
@@ -32,9 +31,9 @@ class ToySimulator:
     Basilisk-grade fidelity.
     """
 
-    friction: float = 0.0        # 0 = nominal, >0 = degraded bearing
-    dropout_rate: float = 0.0    # probability per step of encoder zero-read
-    stiction_rate: float = 0.0   # probability per step of stiction event
+    friction: float = 0.0  # 0 = nominal, >0 = degraded bearing
+    dropout_rate: float = 0.0  # probability per step of encoder zero-read
+    stiction_rate: float = 0.0  # probability per step of stiction event
     _configured: bool = False
 
     def configure(self, mapping: SimMapping) -> "ToySimulator":
@@ -50,9 +49,11 @@ class ToySimulator:
         n = int(duration_s)
         t = np.arange(n)
 
-        speed = 4000 + 200 * np.sin(2 * np.pi * 0.002 * t) + rng.normal(0, 8, n)
+        # Noise levels mirror the synthetic generator (speed ~12 rpm, current
+        # ~0.01 A, temp ~0.3 C) so real-vs-simulated signatures are comparable.
+        speed = 4000 + 200 * np.sin(2 * np.pi * 0.002 * t) + rng.normal(0, 12, n)
         current = 0.5 + 0.05 * np.sin(2 * np.pi * 0.002 * t) + rng.normal(0, 0.01, n)
-        temperature = 25 + 3 * np.sin(2 * np.pi * 0.0005 * t) + rng.normal(0, 0.2, n)
+        temperature = 25 + 3 * np.sin(2 * np.pi * 0.0005 * t) + rng.normal(0, 0.3, n)
 
         ramp = np.linspace(0, 1, n)
         current += ramp * self.friction * 0.4
@@ -68,12 +69,18 @@ class ToySimulator:
             speed[mask] -= rng.uniform(300, 600, size=mask.sum())
             current[mask] += rng.uniform(0.3, 0.8, size=mask.sum())
 
-        return pd.DataFrame({
-            "t": t,
-            "wheel_speed_rpm": speed,
-            "wheel_current_a": current,
-            "wheel_temp_c": temperature,
-        })
+        return pd.DataFrame(
+            {
+                "t": t,
+                "wheel_speed_rpm": speed,
+                "wheel_current_a": current,
+                "wheel_temp_c": temperature,
+            }
+        )
 
-    def run_ensemble(self, n_sims: int, duration_s: float, base_seed: int = 0) -> list[pd.DataFrame]:
-        return [self.run(duration_s=duration_s, seed=base_seed + i) for i in range(n_sims)]
+    def run_ensemble(
+        self, n_sims: int, duration_s: float, base_seed: int = 0
+    ) -> list[pd.DataFrame]:
+        return [
+            self.run(duration_s=duration_s, seed=base_seed + i) for i in range(n_sims)
+        ]
