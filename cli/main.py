@@ -219,7 +219,7 @@ def rerun(
 
 
 # ────────────────────────────────────────────────────────────────────────────
-#  Phase 4 — Serve (FastAPI)
+#  Phase 4 & UI — Serve, Dashboard & Unified Stack
 # ────────────────────────────────────────────────────────────────────────────
 
 @app.command()
@@ -231,6 +231,40 @@ def serve(
     import uvicorn
     typer.echo(f"Starting spaceThink API on {host}:{port}")
     uvicorn.run("api.app:app", host=host, port=port, reload=True)
+
+
+@app.command()
+def dashboard(
+    port: int = typer.Option(8501, help="Port for Streamlit dashboard"),
+):
+    """Start the Streamlit EXHYTE dashboard."""
+    import subprocess
+    import sys
+    typer.echo(f"Starting spaceThink Dashboard on http://localhost:{port}")
+    subprocess.run([sys.executable, "-m", "streamlit", "run", "dashboard/app.py", "--server.port", str(port)])
+
+
+@app.command()
+def start(
+    host: str = typer.Option("127.0.0.1", help="Host to bind to"),
+    port_api: int = typer.Option(8000, help="Port for FastAPI server"),
+    port_dashboard: int = typer.Option(8501, help="Port for Streamlit dashboard"),
+    api_only: bool = typer.Option(False, help="Launch only the FastAPI server"),
+    dashboard_only: bool = typer.Option(False, help="Launch only the Streamlit dashboard"),
+    no_browser: bool = typer.Option(False, help="Do not open browser automatically"),
+    generate_data: bool = typer.Option(False, help="Force regenerate synthetic datasets and reports"),
+):
+    """Start the entire spaceThink application stack (API + Streamlit UI Dashboard)."""
+    from run import run_stack
+    run_stack(
+        host=host,
+        port_api=port_api,
+        port_dashboard=port_dashboard,
+        api_only=api_only,
+        dashboard_only=dashboard_only,
+        open_browser=not no_browser,
+        force_generate_data=generate_data,
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -255,3 +289,4 @@ def export(
 
 if __name__ == "__main__":
     app()
+

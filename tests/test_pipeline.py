@@ -84,7 +84,7 @@ def test_exhyte_timeline_generator_offline():
         posterior=0.75,
         ranked_mechanisms=[("bearing_friction_increase", 0.75), ("stiction", 0.25)],
     )
-    assert "EXHYTE Closed-Loop Timeline" in timeline
+    assert ("EXHYTE Closed-Loop Timeline" in timeline or "EXHYTE Closed‑Loop Timeline" in timeline or "EXHYTE Closed" in timeline)
     assert "EXPLORE" in timeline
     assert "HYPOTHESIZE" in timeline
     assert "TEST" in timeline

@@ -74,7 +74,41 @@ spacethink-mvp/
 
 ## Quickstart
 
-### 1. Set Up Environment
+### 1. Single Command to Run the Entire Project (Recommended)
+
+Run the full stack (Data Check/Generation + FastAPI Backend + Streamlit UI Dashboard) with one command:
+
+```bash
+# Cross-platform Python launcher (from repo root or spacethink-mvp):
+python run.py
+
+# Or using the Typer CLI:
+python -m cli.main start
+
+# Or using the Windows script:
+.\run.bat
+# Or in PowerShell:
+.\run.ps1
+```
+
+This single command:
+1. Automatically verifies synthetic data and compiled reports (generating baseline datasets if not present).
+2. Starts the **FastAPI REST Server** on `http://127.0.0.1:8000` (docs at `http://127.0.0.1:8000/docs`).
+3. Starts the **Streamlit EXHYTE Dashboard** on `http://localhost:8501`.
+4. Streams multiplexed logs and provides graceful multi-process termination on `Ctrl+C`.
+
+**Launcher Flags:**
+```bash
+python run.py --help
+python run.py --dashboard-only    # Launch only the Streamlit UI
+python run.py --api-only          # Launch only the REST API server
+python run.py --generate-data     # Force regenerate synthetic runs & reports
+python run.py --port-api 8000 --port-dashboard 8501
+```
+
+---
+
+### 2. Manual Environment Setup (Optional)
 ```bash
 python -m venv .venv
 # Linux/macOS:
@@ -85,7 +119,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Run CLI Commands
+### 3. Individual CLI Commands
 
 ```bash
 # Generate synthetic reaction-wheel telemetry
@@ -93,6 +127,15 @@ python -m cli.main generate-data
 
 # Run closed-loop diagnosis on all synthetic runs
 python -m cli.main run-all
+
+# Start the full stack
+python -m cli.main start
+
+# Launch only Streamlit Dashboard
+python -m cli.main dashboard
+
+# Start the FastAPI server
+python -m cli.main serve --port 8000
 
 # Run a digital twin simulation
 python -m cli.main twin --fault rw_friction --magnitude 0.8
@@ -109,16 +152,7 @@ python -m cli.main rerun <run_id_1> --diff <run_id_2>
 
 # Export forecaster for edge deployment (ONNX / NumPy)
 python -m cli.main export --format numpy
-
-# Start the FastAPI server
-python -m cli.main serve --port 8000
 ```
-
-### 3. Launch Streamlit Dashboard
-```bash
-streamlit run dashboard/app.py
-```
-Open **[http://localhost:8501](http://localhost:8501)** to inspect detected events, LLM Council deliberation, Human Validation Gate sign-offs, and Groq AI timelines.
 
 ---
 
