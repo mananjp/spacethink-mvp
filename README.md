@@ -164,4 +164,4 @@ Run the full automated test suite (26 tests covering unit, contract, and integra
 pytest -v
 ```
 
-All tests run hermetically against test doubles without requiring network access, paid API keys, or GPU hardware.
+All tests run hermetically against test doubles without requiring network access, paid API keys, or GPU hardware...
